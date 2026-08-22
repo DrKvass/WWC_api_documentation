@@ -5,7 +5,7 @@ The WWC Weather API provides authenticated, read-only access to current storm an
 **Base URL**
 
 ```text
-https://k.w4.si
+get the base URL from Dr.Kvass on discord.
 ```
 
 ## Access
