@@ -11,7 +11,7 @@ For access or the current API base URL, contact **dr.kvass on Discord**.
 The examples in this document use the non-production placeholder address:
 
 ```text
-https://api.example.com
+get the base URL from Dr.Kvass on discord.
 ```
 
 Replace it with the API address supplied to you.
@@ -373,15 +373,15 @@ Use that value with `GET /claims/{id}` to retrieve the linked station. The field
 
 ## HTTP responses
 
-| Status | Meaning |
-|---:|---|
-| `200` | Request succeeded |
-| `401` | Token missing or invalid |
-| `403` | Token lacks required permission |
-| `404` | Resource ID does not exist |
-| `422` | Invalid path/request value |
-| `500` | Unexpected server error |
-| `503` | API temporarily unavailable |
+| Status | Meaning                         |
+| -----: | ------------------------------- |
+|  `200` | Request succeeded               |
+|  `401` | Token missing or invalid        |
+|  `403` | Token lacks required permission |
+|  `404` | Resource ID does not exist      |
+|  `422` | Invalid path/request value      |
+|  `500` | Unexpected server error         |
+|  `503` | API temporarily unavailable     |
 
 ## Python example
 
