@@ -438,7 +438,3 @@ current_storms = {
 ```
 
 For the real API address, access details, token problems, or integration questions, contact **dr.kvass on Discord**.
-
-## Changelog
-
-See [`WWC_API_CHANGELOG.md`](WWC_API_CHANGELOG.md) for public integration-impact changes.
