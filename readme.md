@@ -154,6 +154,64 @@ Example response:
   }
 ]
 ```
+StormObject:
+```py
+class StormObject(WWCBaseModel):
+    """Complete mutable storm domain object shared by Discord and FastAPI.
+
+    ``id`` is the stable internal primary key. ``thread_id`` is the optional,
+    unique Discord forum-thread ID. Discord-created storms always have a
+    thread ID; the nullable schema supports future API creation/orchestration.
+    Reference-table-backed properties expose their integer database ID, stable
+    code, and human-readable name.
+    """
+ 
+    id: int # unique ID/sqlite3 PK
+    thread_id: int | None = None # discord thread ID where the storm is managed in WWC
+    designation: str # name of the storm
+
+    status_id: int # status (ongoing/predicted/concluded) id/code/name
+    status_code: str
+    status_name: str
+
+    type_id: int | None = None # type (rain/snow) id/code/name
+    type_code: str | None = None
+    type_name: str | None = None 
+
+    size_id: int | None = None # size id/code/name
+    size_code: str | None = None
+    size_name: str | None = None
+
+    origin_id: int | None = None # origin hex id/name
+    origin_name: str | None = None
+
+    intensity_id: int | None = None # Max intensity id/code/name
+    intensity_code: str | None = None
+    intensity_name: str | None = None
+
+    fhs_x: float | None = None # Foxholestats x coord
+    fhs_y: float | None = None # Foxholestats y coord
+    radius: int | None = None # radius in meters
+
+    named_by: int | None = None # discord user who named the storm
+    prediction_detected_by: int | None = None # discord user who detected the prediction of the storm
+    start_detected_by: int | None = None # discord user who detected the start of the storm
+    end_detected_by: int | None = None # discord user who detected the end of the storm
+
+    analyst_prediction: str | None = None # analysts of a predicted storm listed in a pre-formatted discord users string
+    analyst_ongoing: str | None = None # analysts of an ongoing storm listed in a pre-formatted discord users string
+
+    prediction_plotted_by: int | None = None # discord user who plotted the prediction map
+    tracking_plotted_by: int | None = None # discord user who plotted the tracking map
+
+    report_time: int | None = None # When the storm report was created
+    detection_time: int | None = None # The time of the storm being found
+    start_time: int | None = None # When the marked start time of the storm is/was
+    end_time: int | None = None # When the marked end time of the storm is/was
+
+    ws_prediction: str | None = None # returns a semi formatted list of all WS claim names used in a given storm to predict a storm
+    ws_ongoing: str | None = None # returns a semi formatted list of all WS claim names used in a given storm to track a storm
+```
 
 If no Predicted/Ongoing storms are available, the response is:
 
@@ -265,6 +323,29 @@ Example response:
   "fhs_y": -105.3,
   "linked_id": 8123456789012345
 }
+```
+ClaimObject:
+```py
+class ClaimObject(WWCBaseModel):
+    """One weather-station claim from the active database.
+
+    ``id`` is the stable internal primary key. ``code`` is the unique,
+    user-facing in-game claim code and can change without changing ``id``.
+    """
+
+    id: int # Unique id / sqlite3 PK
+    code: int # code of the WS used to connect between WSs
+    claim_hex_name: str # name of the WS
+    user_id: int # discord user owner of the WS
+    hex_id: int # id of the hex that the claim is in
+    hex_name: str | None = None # name of the hex the claim is in
+    state: str # Online/Offline/Claimed -> describes if the WS exists (offline or online) / is planned (claimed) / is usable (online only)
+    state_id: int | None = None # id of state
+    state_code: str | None = None # code of state
+    fhs_x: float | None = None # FSH x,y coords
+    fhs_y: float | None = None
+    linked_id: int | None = None # id of a weather station that is connected to this weather station. 
+    # Note: links are always one-to-one relations, so if the other WS returns a different linked_id, then the ws link was deleted/switch between API calls!
 ```
 
 A claim may be paired with one other station. If present, `linked_id` is the stable API ID of the linked claim and can be followed with `GET /claims/{id}`.
