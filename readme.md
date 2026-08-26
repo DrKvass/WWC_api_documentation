@@ -1,6 +1,6 @@
 # WWC Weather API — Public User Documentation
 
-The WWC Weather API provides authenticated, read-only access to current storm information, weather-station claims, reference codes, and public weather icons.
+The WWC Weather API provides authenticated, read-only access to current storm information, real-time storm-change Server-Sent Events (SSE), weather-station claims, reference codes, and public weather icons.
 
 For the current API address and a Bearer token, contact **dr.kvass on Discord**.
 
@@ -28,6 +28,7 @@ Treat the token like a password. Use HTTPS only, never put the token in a URL, a
 GET /
 GET /codes/
 GET /storms/
+GET /storms/events/
 GET /storms/{id}
 GET /claims/
 GET /claims/{id}
@@ -50,6 +51,111 @@ Treat `GET /storms/` as the authoritative set of storms that should currently be
 If your application previously received a storm and that storm is no longer present in a later `/storms/` response, **stop displaying it**. Do not keep a stale storm visible simply because it exists in a client cache.
 
 Likewise, `GET /storms/{id}` returns `404 Not Found` when that storm is no longer part of the Predicted/Ongoing feed.
+
+## Storm contributor names
+
+Storm list/detail responses now return contributor **Discord server display names** instead of contributor user IDs or Discord mention strings. A server nickname is used when the member has one; otherwise the API falls back to the member's Discord display name/username.
+
+The affected storm fields are:
+
+```text
+named_by
+prediction_detected_by
+start_detected_by
+end_detected_by
+prediction_plotted_by
+tracking_plotted_by
+analyst_prediction
+analyst_ongoing
+```
+
+The first six fields contain one display-name string when present. `analyst_prediction` and `analyst_ongoing` may represent several users and are returned as comma-separated display-name strings.
+
+Example:
+
+```json
+{
+  "named_by": "Kvass",
+  "prediction_detected_by": "Weather Watcher",
+  "analyst_prediction": "Kvass, Forecaster",
+  "prediction_plotted_by": "Map Tech"
+}
+```
+
+These names are **display data, not stable identifiers**. Members can change their nickname, so integrations must not use a contributor name as a database key or identity. Continue to identify the storm itself with the stable storm `id`. Nickname changes can take up to about five minutes to appear because the API briefly caches Discord member names.
+
+If a historical contributor has left the server, the API attempts to use the Discord account display name/username. If Discord cannot resolve the account at all, that contributor field is omitted rather than returning the raw numeric user ID.
+
+This change applies to storm contributor fields only. Claim resources still expose their existing `user_id` owner field.
+
+## Real-time storm updates with SSE
+
+`GET /storms/events/` is a long-lived authenticated Server-Sent Events stream. It is intended to reduce frequent polling while still keeping `/storms/` and `/storms/{id}` as the authoritative current-state resources.
+
+The stream notifies clients when:
+
+- a new storm is created;
+- any storm changes lifecycle status, including a Concluded storm being restored to Predicted or Ongoing;
+- `fhs_x`, `fhs_y`, or `radius` changes while the storm is Predicted or Ongoing.
+
+Geometry edits made while a storm is Concluded are not emitted.
+
+Connect with a normal Bearer header and disable client-side response buffering. For example:
+
+```bash
+curl -N \
+  -H "Accept: text/event-stream" \
+  -H "Authorization: Bearer $WWC_TOKEN" \
+  https://api.example.com/storms/events/
+```
+
+A connection begins with a control event similar to:
+
+```text
+retry: 3000
+event: stream.ready
+data: {"cursor":42,"latest_event_id":42,"replay_pending":false,"reset_recovery":false}
+```
+
+Normal storm events look like:
+
+```text
+id: 43
+event: storm.geometry_changed
+data: {"id":43,"event_type":"storm.geometry_changed","storm_id":3608617449183851,"status_id":2,"status_code":"ongoing","active":true,"changed_fields":["fhs_x","fhs_y","radius"],"created_at":1787774400}
+```
+
+The possible `event` values are:
+
+```text
+storm.created
+storm.status_changed
+storm.geometry_changed
+```
+
+The payload is a **change notification**, not a full storm snapshot. Use `storm_id` with `GET /storms/{id}` or reconcile the full `GET /storms/` list after receiving an event.
+
+For a race-resistant initial load, open the SSE connection first, wait for `stream.ready`, then fetch `GET /storms/` while keeping the stream open. Queue any numbered storm events that arrive during the snapshot request, apply the snapshot, and then apply those queued events in event-ID order. This avoids a gap between the initial snapshot and the live stream.
+
+- `active: true` means the storm is currently Predicted/Ongoing and can be refetched from the current storm API.
+- `active: false` means it is outside the current feed (normally Concluded), so remove it from a current-storm display.
+- `changed_fields` identifies the relevant fields that triggered the event. Creation events use an empty list.
+
+### Reconnecting without losing events
+
+SSE clients should preserve the last numbered event ID. On reconnect, send the standard header:
+
+```http
+Last-Event-ID: 43
+```
+
+The server replays newer retained events and then continues waiting for live changes. Many SSE libraries handle `Last-Event-ID` automatically.
+
+A fresh connection with no `Last-Event-ID` starts at the current event cursor and receives future changes only. A database reset clears the runtime event outbox; the server detects the sequence rewind so a pre-reset cursor does not block later storm events.
+
+During quiet periods the server sends `: keep-alive` comments. These are not application events and can be ignored.
+
+> **Browser note:** the native browser `EventSource` API does not provide a portable way to set an `Authorization` header. Use a backend connection or an SSE/fetch client that supports custom headers. Do not put the Bearer token in the URL.
 
 ---
 
@@ -150,67 +256,13 @@ Example response:
     "type_name": "Rain Storm",
     "fhs_x": 128.0,
     "fhs_y": -128.0,
-    "radius": 2000
+    "radius": 2000,
+    "named_by": "Kvass",
+    "prediction_detected_by": "Weather Watcher",
+    "analyst_ongoing": "Forecaster, Radar Lead",
+    "tracking_plotted_by": "Map Tech"
   }
 ]
-```
-StormObject:
-```py
-class StormObject(WWCBaseModel):
-    """Complete mutable storm domain object shared by Discord and FastAPI.
-
-    ``id`` is the stable internal primary key. ``thread_id`` is the optional,
-    unique Discord forum-thread ID. Discord-created storms always have a
-    thread ID; the nullable schema supports future API creation/orchestration.
-    Reference-table-backed properties expose their integer database ID, stable
-    code, and human-readable name.
-    """
- 
-    id: int # unique ID/sqlite3 PK
-    thread_id: int | None = None # discord thread ID where the storm is managed in WWC
-    designation: str # name of the storm
-
-    status_id: int # status (ongoing/predicted/concluded) id/code/name
-    status_code: str
-    status_name: str
-
-    type_id: int | None = None # type (rain/snow) id/code/name
-    type_code: str | None = None
-    type_name: str | None = None 
-
-    size_id: int | None = None # size id/code/name
-    size_code: str | None = None
-    size_name: str | None = None
-
-    origin_id: int | None = None # origin hex id/name
-    origin_name: str | None = None
-
-    intensity_id: int | None = None # Max intensity id/code/name
-    intensity_code: str | None = None
-    intensity_name: str | None = None
-
-    fhs_x: float | None = None # Foxholestats x coord
-    fhs_y: float | None = None # Foxholestats y coord
-    radius: int | None = None # radius in meters
-
-    named_by: int | None = None # discord user who named the storm
-    prediction_detected_by: int | None = None # discord user who detected the prediction of the storm
-    start_detected_by: int | None = None # discord user who detected the start of the storm
-    end_detected_by: int | None = None # discord user who detected the end of the storm
-
-    analyst_prediction: str | None = None # analysts of a predicted storm listed in a pre-formatted discord users string
-    analyst_ongoing: str | None = None # analysts of an ongoing storm listed in a pre-formatted discord users string
-
-    prediction_plotted_by: int | None = None # discord user who plotted the prediction map
-    tracking_plotted_by: int | None = None # discord user who plotted the tracking map
-
-    report_time: int | None = None # When the storm report was created
-    detection_time: int | None = None # The time of the storm being found
-    start_time: int | None = None # When the marked start time of the storm is/was
-    end_time: int | None = None # When the marked end time of the storm is/was
-
-    ws_prediction: str | None = None # returns a semi formatted list of all WS claim names used in a given storm to predict a storm
-    ws_ongoing: str | None = None # returns a semi formatted list of all WS claim names used in a given storm to track a storm
 ```
 
 If no Predicted/Ongoing storms are available, the response is:
@@ -324,29 +376,6 @@ Example response:
   "linked_id": 8123456789012345
 }
 ```
-ClaimObject:
-```py
-class ClaimObject(WWCBaseModel):
-    """One weather-station claim from the active database.
-
-    ``id`` is the stable internal primary key. ``code`` is the unique,
-    user-facing in-game claim code and can change without changing ``id``.
-    """
-
-    id: int # Unique id / sqlite3 PK
-    code: int # code of the WS used to connect between WSs
-    claim_hex_name: str # name of the WS
-    user_id: int # discord user owner of the WS
-    hex_id: int # id of the hex that the claim is in
-    hex_name: str | None = None # name of the hex the claim is in
-    state: str # Online/Offline/Claimed -> describes if the WS exists (offline or online) / is planned (claimed) / is usable (online only)
-    state_id: int | None = None # id of state
-    state_code: str | None = None # code of state
-    fhs_x: float | None = None # FSH x,y coords
-    fhs_y: float | None = None
-    linked_id: int | None = None # id of a weather station that is connected to this weather station. 
-    # Note: links are always one-to-one relations, so if the other WS returns a different linked_id, then the ws link was deleted/switch between API calls!
-```
 
 A claim may be paired with one other station. If present, `linked_id` is the stable API ID of the linked claim and can be followed with `GET /claims/{id}`.
 
@@ -403,15 +432,16 @@ For logic, prefer `*_code` fields over `*_name` display fields.
 
 ## Common HTTP responses
 
-| Status | Meaning |
-|---:|---|
-| `200` | Request succeeded |
-| `401` | Token missing or invalid |
-| `403` | Token lacks required permission |
-| `404` | Resource is unavailable in the current endpoint/feed |
-| `422` | Invalid path/request value |
-| `500` | Unexpected server error |
-| `503` | API temporarily unavailable |
+| Status | Meaning                                                       |
+| -----: | ------------------------------------------------------------- |
+|  `200` | Request succeeded                                             |
+|  `400` | Invalid request metadata, such as a malformed `Last-Event-ID` |
+|  `401` | Token missing or invalid                                      |
+|  `403` | Token lacks required permission                               |
+|  `404` | Resource is unavailable in the current endpoint/feed          |
+|  `422` | Invalid path/request value                                    |
+|  `500` | Unexpected server error                                       |
+|  `503` | API temporarily unavailable                                   |
 
 ## Python polling example
 
