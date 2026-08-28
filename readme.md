@@ -4,11 +4,13 @@ The WWC Weather API provides authenticated, read-only access to current storm in
 
 For the current API address and a Bearer token, contact **dr.kvass on Discord**.
 
-All examples below use the placeholder base URL:
+All examples below use the placeholder host:
 
 ```text
 https://api.example.com
 ```
+
+All FastAPI routes are namespaced below `/api/`, leaving the site root `/` available for the website.
 
 Replace it with the address supplied to you.
 
@@ -25,32 +27,32 @@ Treat the token like a password. Use HTTPS only, never put the token in a URL, a
 ## Current endpoints
 
 ```text
-GET /
-GET /codes/
-GET /storms/
-GET /storms/events/
-GET /storms/{id}
-GET /claims/
-GET /claims/{id}
-GET /icons/rain/
-GET /icons/snow/
+GET /api/
+GET /api/codes/
+GET /api/storms/
+GET /api/storms/events/
+GET /api/storms/{id}
+GET /api/claims/
+GET /api/claims/{id}
+GET /api/icons/rain/
+GET /api/icons/snow/
 ```
 
 All current endpoints require `read` access or higher.
 
 ## Important storm-feed behavior
 
-`GET /storms/` and `GET /storms/{id}` expose only **current Predicted and Ongoing storms**.
+`GET /api/storms/` and `GET /api/storms/{id}` expose only **current Predicted and Ongoing storms**.
 
 Storms whose status becomes **Concluded** are intentionally no longer returned by the storm API, even though the API code catalogue may still include the `concluded` status as a valid lifecycle value.
 
 ### Integration requirement
 
-Treat `GET /storms/` as the authoritative set of storms that should currently be displayed.
+Treat `GET /api/storms/` as the authoritative set of storms that should currently be displayed.
 
-If your application previously received a storm and that storm is no longer present in a later `/storms/` response, **stop displaying it**. Do not keep a stale storm visible simply because it exists in a client cache.
+If your application previously received a storm and that storm is no longer present in a later `/api/storms/` response, **stop displaying it**. Do not keep a stale storm visible simply because it exists in a client cache.
 
-Likewise, `GET /storms/{id}` returns `404 Not Found` when that storm is no longer part of the Predicted/Ongoing feed.
+Likewise, `GET /api/storms/{id}` returns `404 Not Found` when that storm is no longer part of the Predicted/Ongoing feed.
 
 ## Storm contributor names
 
@@ -90,7 +92,7 @@ This change applies to storm contributor fields only. Claim resources still expo
 
 ## Real-time storm updates with SSE
 
-`GET /storms/events/` is a long-lived authenticated Server-Sent Events stream. It is intended to reduce frequent polling while still keeping `/storms/` and `/storms/{id}` as the authoritative current-state resources.
+`GET /api/storms/events/` is a long-lived authenticated Server-Sent Events stream. It is intended to reduce frequent polling while still keeping `/api/storms/` and `/api/storms/{id}` as the authoritative current-state resources.
 
 The stream notifies clients when:
 
@@ -106,7 +108,7 @@ Connect with a normal Bearer header and disable client-side response buffering. 
 curl -N \
   -H "Accept: text/event-stream" \
   -H "Authorization: Bearer $WWC_TOKEN" \
-  https://api.example.com/storms/events/
+  https://api.example.com/api/storms/events/
 ```
 
 A connection begins with a control event similar to:
@@ -133,9 +135,9 @@ storm.status_changed
 storm.geometry_changed
 ```
 
-The payload is a **change notification**, not a full storm snapshot. Use `storm_id` with `GET /storms/{id}` or reconcile the full `GET /storms/` list after receiving an event.
+The payload is a **change notification**, not a full storm snapshot. Use `storm_id` with `GET /api/storms/{id}` or reconcile the full `GET /api/storms/` list after receiving an event.
 
-For a race-resistant initial load, open the SSE connection first, wait for `stream.ready`, then fetch `GET /storms/` while keeping the stream open. Queue any numbered storm events that arrive during the snapshot request, apply the snapshot, and then apply those queued events in event-ID order. This avoids a gap between the initial snapshot and the live stream.
+For a race-resistant initial load, open the SSE connection first, wait for `stream.ready`, then fetch `GET /api/storms/` while keeping the stream open. Queue any numbered storm events that arrive during the snapshot request, apply the snapshot, and then apply those queued events in event-ID order. This avoids a gap between the initial snapshot and the live stream.
 
 - `active: true` means the storm is currently Predicted/Ongoing and can be refetched from the current storm API.
 - `active: false` means it is outside the current feed (normally Concluded), so remove it from a current-storm display.
@@ -159,7 +161,7 @@ During quiet periods the server sends `: keep-alive` comments. These are not app
 
 ---
 
-## `GET /`
+## `GET /api/`
 
 Checks that the supplied Bearer token authenticates successfully.
 
@@ -168,12 +170,12 @@ Example:
 ```bash
 curl \
   -H "Authorization: Bearer $WWC_TOKEN" \
-  https://api.example.com/
+  https://api.example.com/api/
 ```
 
 ---
 
-## `GET /codes/`
+## `GET /api/codes/`
 
 Returns current database-backed reference codes used by storm and claim data.
 
@@ -220,13 +222,13 @@ Example shape:
 }
 ```
 
-The exact catalogue may evolve. Clients should request `/codes/` rather than hard-coding copied display names or numeric IDs.
+The exact catalogue may evolve. Clients should request `/api/codes/` rather than hard-coding copied display names or numeric IDs.
 
 For application logic, prefer stable dictionary keys/codes such as `rain`, `ongoing`, and `online` over human-readable `name` values.
 
 ---
 
-## `GET /storms/`
+## `GET /api/storms/`
 
 Returns all currently exposed storms.
 
@@ -237,7 +239,7 @@ Example:
 ```bash
 curl \
   -H "Authorization: Bearer $WWC_TOKEN" \
-  https://api.example.com/storms/
+  https://api.example.com/api/storms/
 ```
 
 Example response:
@@ -277,7 +279,7 @@ If you poll this endpoint, reconcile your local display against the entire retur
 
 ---
 
-## `GET /storms/{id}`
+## `GET /api/storms/{id}`
 
 Returns one currently exposed storm by its stable API `id`.
 
@@ -288,7 +290,7 @@ Example:
 ```bash
 curl \
   -H "Authorization: Bearer $WWC_TOKEN" \
-  https://api.example.com/storms/3608617449183851
+  https://api.example.com/api/storms/3608617449183851
 ```
 
 The endpoint returns `404 Not Found` if:
@@ -330,7 +332,7 @@ This convention applies when rendering either rain or snow storm coverage.
 
 ---
 
-## `GET /claims/`
+## `GET /api/claims/`
 
 Returns all weather-station claims.
 
@@ -339,12 +341,12 @@ Example:
 ```bash
 curl \
   -H "Authorization: Bearer $WWC_TOKEN" \
-  https://api.example.com/claims/
+  https://api.example.com/api/claims/
 ```
 
 ---
 
-## `GET /claims/{id}`
+## `GET /api/claims/{id}`
 
 Returns one weather-station claim by its stable API `id`.
 
@@ -355,7 +357,7 @@ Example:
 ```bash
 curl \
   -H "Authorization: Bearer $WWC_TOKEN" \
-  https://api.example.com/claims/7303474700435961
+  https://api.example.com/api/claims/7303474700435961
 ```
 
 Example response:
@@ -377,18 +379,18 @@ Example response:
 }
 ```
 
-A claim may be paired with one other station. If present, `linked_id` is the stable API ID of the linked claim and can be followed with `GET /claims/{id}`.
+A claim may be paired with one other station. If present, `linked_id` is the stable API ID of the linked claim and can be followed with `GET /api/claims/{id}`.
 
 ---
 
-## `GET /icons/rain/`
+## `GET /api/icons/rain/`
 
 Returns the current rain icon as a PNG image.
 
 ```bash
 curl \
   -H "Authorization: Bearer $WWC_TOKEN" \
-  https://api.example.com/icons/rain/ \
+  https://api.example.com/api/icons/rain/ \
   --output rain.png
 ```
 
@@ -400,14 +402,14 @@ Content-Type: image/png
 
 ---
 
-## `GET /icons/snow/`
+## `GET /api/icons/snow/`
 
 Returns the current snow icon as a PNG image.
 
 ```bash
 curl \
   -H "Authorization: Bearer $WWC_TOKEN" \
-  https://api.example.com/icons/snow/ \
+  https://api.example.com/api/icons/snow/ \
   --output snow.png
 ```
 
@@ -454,7 +456,7 @@ token = os.environ["WWC_API_TOKEN"]
 headers = {"Authorization": f"Bearer {token}"}
 
 response = requests.get(
-    f"{base_url}/storms/",
+    f"{base_url}/api/storms/",
     headers=headers,
     timeout=10,
 )
