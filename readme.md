@@ -1,472 +1,321 @@
-# WWC Weather API — Public User Documentation
+# WWC Public API Guide
 
-The WWC Weather API provides authenticated, read-only access to current storm information, real-time storm-change Server-Sent Events (SSE), weather-station claims, reference codes, and public weather icons.
+Current contract: **30 August 2026**
 
-For the current API address and a Bearer token, contact **dr.kvass on Discord**.
+This document is intentionally self-contained. It describes the public WWC Bearer-token API as it is currently exposed at `https://example.url/api/`.
 
-All examples below use the placeholder host:
+## Base URL
 
-```text
-https://api.example.com
+Contac dr.kvass on discord.
+
+This doc will use
+
+```
+https://example.url/
 ```
 
-All FastAPI routes are namespaced below `/api/`, leaving the site root `/` available for the website.
-
-Replace it with the address supplied to you.
+All API-client routes are below `/api/`. The website login at `/`, browser OAuth routes under `/auth/`, and the protected interactive map under `/map/` are separate browser interfaces and do not use API Bearer tokens.
 
 ## Authentication
 
-Send your token with every request:
+Every request requires an HTTP Bearer token:
 
 ```http
-Authorization: Bearer YOUR_TOKEN
+Authorization: Bearer <token>
 ```
-
-Treat the token like a password. Use HTTPS only, never put the token in a URL, and do not publish it in source control, screenshots, logs, or public client-side code.
-
-## Current endpoints
-
-```text
-GET /api/
-GET /api/codes/
-GET /api/storms/
-GET /api/storms/events/
-GET /api/storms/{id}
-GET /api/claims/
-GET /api/claims/{id}
-GET /api/icons/rain/
-GET /api/icons/snow/
-```
-
-All current endpoints require `read` access or higher.
-
-## Important storm-feed behavior
-
-`GET /api/storms/` and `GET /api/storms/{id}` expose only **current Predicted and Ongoing storms**.
-
-Storms whose status becomes **Concluded** are intentionally no longer returned by the storm API, even though the API code catalogue may still include the `concluded` status as a valid lifecycle value.
-
-### Integration requirement
-
-Treat `GET /api/storms/` as the authoritative set of storms that should currently be displayed.
-
-If your application previously received a storm and that storm is no longer present in a later `/api/storms/` response, **stop displaying it**. Do not keep a stale storm visible simply because it exists in a client cache.
-
-Likewise, `GET /api/storms/{id}` returns `404 Not Found` when that storm is no longer part of the Predicted/Ongoing feed.
-
-## Storm contributor names
-
-Storm list/detail responses now return contributor **Discord server display names** instead of contributor user IDs or Discord mention strings. A server nickname is used when the member has one; otherwise the API falls back to the member's Discord display name/username.
-
-The affected storm fields are:
-
-```text
-named_by
-prediction_detected_by
-start_detected_by
-end_detected_by
-prediction_plotted_by
-tracking_plotted_by
-analyst_prediction
-analyst_ongoing
-```
-
-The first six fields contain one display-name string when present. `analyst_prediction` and `analyst_ongoing` may represent several users and are returned as comma-separated display-name strings.
 
 Example:
 
+```bash
+curl -H "Authorization: Bearer $WWC_TOKEN" \
+  https://example.url/api/
+```
+
+A successful authentication check returns an object containing the token display name and permission.
+
+Bearer permissions are hierarchical:
+
+```text
+read < write < admin
+```
+
+A `write` token satisfies `read` checks. An `admin` token satisfies both `write` and `read` checks. The current public HTTP API exposes **read routes only**; there are no POST, PUT, PATCH, or DELETE API routes. Claim reads are deliberately restricted to `admin` tokens.
+
+## Endpoint summary
+
+| Method | Route                 | Required permission | Purpose                                                   |
+| ------ | --------------------- | ------------------- | --------------------------------------------------------- |
+| GET    | `/api/`               | read                | Verify the token and return its name/permission.          |
+| GET    | `/api/codes/`         | read                | Current database-backed reference codes.                  |
+| GET    | `/api/storms/`        | read                | List API-published active storms.                         |
+| GET    | `/api/storms/{id}`    | read                | Return one API-published active storm by stable storm ID. |
+| GET    | `/api/storms/events/` | read                | Publication-aware storm Server-Sent Events stream.        |
+| GET    | `/api/claims/`        | **admin**           | List all active weather-station claims.                   |
+| GET    | `/api/claims/{id}`    | **admin**           | Return one claim by stable claim ID.                      |
+| GET    | `/api/icons/rain/`    | read                | Rain icon PNG.                                            |
+| GET    | `/api/icons/snow/`    | read                | Snow icon PNG.                                            |
+
+Trailing slashes are shown exactly as used by the route definitions. Storm and claim `{id}` values are opaque stable database IDs.
+
+## Authentication check
+
+### `GET /api/`
+
+Example response:
+
 ```json
 {
-  "named_by": "Kvass",
-  "prediction_detected_by": "Weather Watcher",
-  "analyst_prediction": "Kvass, Forecaster",
-  "prediction_plotted_by": "Map Tech"
+  "auth_req": "Successfully authorized with your token!",
+  "name": "integration-name",
+  "permission": "read"
 }
 ```
 
-These names are **display data, not stable identifiers**. Members can change their nickname, so integrations must not use a contributor name as a database key or identity. Continue to identify the storm itself with the stable storm `id`. Nickname changes can take up to about five minutes to appear because the API briefly caches Discord member names.
+Use this route to verify a token without fetching domain data.
 
-If a historical contributor has left the server, the API attempts to use the Discord account display name/username. If Discord cannot resolve the account at all, that contributor field is omitted rather than returning the raw numeric user ID.
+## Reference codes
 
-This change applies to storm contributor fields only. Claim resources still expose their existing `user_id` owner field.
+### `GET /api/codes/`
 
-## Real-time storm updates with SSE
+Returns the current database-backed code catalogue. The top-level keys are:
 
-`GET /api/storms/events/` is a long-lived authenticated Server-Sent Events stream. It is intended to reduce frequent polling while still keeping `/api/storms/` and `/api/storms/{id}` as the authoritative current-state resources.
-
-The stream notifies clients when:
-
-- a new storm is created;
-- any storm changes lifecycle status, including a Concluded storm being restored to Predicted or Ongoing;
-- `fhs_x`, `fhs_y`, or `radius` changes while the storm is Predicted or Ongoing.
-
-Geometry edits made while a storm is Concluded are not emitted.
-
-Connect with a normal Bearer header and disable client-side response buffering. For example:
-
-```bash
-curl -N \
-  -H "Accept: text/event-stream" \
-  -H "Authorization: Bearer $WWC_TOKEN" \
-  https://api.example.com/api/storms/events/
+```json
+{
+  "storm_codes": {},
+  "claim_codes": {}
+}
 ```
 
-A connection begins with a control event similar to:
+Each category is keyed by stable code and contains database IDs and human-readable names. Clients should prefer the stable textual code for logic and use the name for presentation.
+
+## Public storm visibility
+
+Storm list/detail reads have an explicit publication boundary. A storm is returned only when **both** are true:
+
+1. `api_published` is true; and
+2. the lifecycle status code is `predicted` or `ongoing`.
+
+New storms are private by default. WWC management explicitly publishes or hides a storm from Discord. Publication does not change the storm's lifecycle status.
+
+Consequences:
+
+- an unpublished Predicted/Ongoing storm is not returned;
+- a published Concluded storm is not returned;
+- a published Predicted/Ongoing storm is returned;
+- a storm may disappear from the list because it was concluded **or** made private.
+
+Treat `GET /api/storms/` as the authoritative current display set.
+
+## Storm list
+
+### `GET /api/storms/`
+
+Returns an array of `APIStormObject` records for API-published Predicted/Ongoing storms.
+
+Important identity fields:
+
+- `id` — stable storm resource ID; use this for API detail requests;
+- `thread_id` — Discord integration value when present; do not use it as the API resource ID;
+- `designation` — current storm name;
+- `api_published` — true for objects returned by the public storm routes.
+
+Lifecycle/reference fields include the corresponding database ID, stable code, and display name where applicable:
+
+- `status_id`, `status_code`, `status_name`;
+- `type_id`, `type_code`, `type_name`;
+- `size_id`, `size_code`, `size_name`;
+- `origin_id`, `origin_name`;
+- `intensity_id`, `intensity_code`, `intensity_name`.
+
+Geometry fields:
+
+- `fhs_x`;
+- `fhs_y`;
+- `radius` — outer radius in metres.
+
+Timeline fields, when known:
+
+- `report_time`;
+- `detection_time`;
+- `start_time`;
+- `end_time`.
+
+Weather-station relationship summaries, when known:
+
+- `ws_prediction`;
+- `ws_ongoing`.
+
+Contributor presentation fields, when known:
+
+- `named_by`;
+- `prediction_detected_by`;
+- `start_detected_by`;
+- `end_detected_by`;
+- `analyst_prediction`;
+- `analyst_ongoing`;
+- `prediction_plotted_by`;
+- `tracking_plotted_by`.
+
+Contributor values are current Discord server display names/nicknames, not Discord user IDs. The two analyst fields may contain comma-separated display names. Names are mutable presentation values and must not be treated as stable identity keys.
+
+Fields whose value is `null` are omitted from the response.
+
+## Storm detail
+
+### `GET /api/storms/{id}`
+
+Returns one API-published Predicted/Ongoing storm by stable `storm.id`.
+
+If the storm does not exist **or is not currently public-active**, the route returns `404`. This intentionally avoids exposing private or historical storm state through the public detail route.
+
+Example:
+
+```bash
+curl -H "Authorization: Bearer $WWC_TOKEN" \
+  https://example.url/api/storms/123456789/
+```
+
+When a previously visible storm stops being public-active, clients should remove it from current displays instead of assuming the ID became invalid permanently.
+
+## Storm Server-Sent Events
+
+### `GET /api/storms/events/`
+
+This route returns `text/event-stream` and is a **reconciliation signal**, not a complete storm snapshot. After receiving a relevant event, clients should reconcile with `GET /api/storms/` or fetch `GET /api/storms/{storm_id}` when appropriate.
+
+### Connection behavior
+
+On connection the stream emits a control event:
 
 ```text
-retry: 3000
 event: stream.ready
-data: {"cursor":42,"latest_event_id":42,"replay_pending":false,"reset_recovery":false}
+retry: 3000
+data: {"cursor":123,"latest_event_id":123,"replay_pending":false,"reset_recovery":false}
 ```
 
-Normal storm events look like:
+During quiet periods the server sends SSE comments approximately every 15 seconds:
 
 ```text
-id: 43
-event: storm.geometry_changed
-data: {"id":43,"event_type":"storm.geometry_changed","storm_id":3608617449183851,"status_id":2,"status_code":"ongoing","active":true,"changed_fields":["fhs_x","fhs_y","radius"],"created_at":1787774400}
+: keep-alive
 ```
 
-The possible `event` values are:
+A new connection without `Last-Event-ID` starts at the current durable cursor and receives future events. A reconnect may send the standard header:
+
+```http
+Last-Event-ID: 123
+```
+
+The server replays retained durable events with a larger ID. If the runtime database was reset and the client's cursor is ahead of the new outbox sequence, the server automatically recovers from the sequence rewind.
+
+### Public event types
+
+The external storm event types are:
 
 ```text
-storm.created
-storm.status_changed
 storm.geometry_changed
+storm.status_changed
+storm.published
+storm.unpublished
 ```
 
-The payload is a **change notification**, not a full storm snapshot. Use `storm_id` with `GET /api/storms/{id}` or reconcile the full `GET /api/storms/` list after receiving an event.
+**Storm creation itself is not a public SSE event.** A newly created storm is private by default and does not become externally visible until WWC management publishes it.
 
-For a race-resistant initial load, open the SSE connection first, wait for `stream.ready`, then fetch `GET /api/storms/` while keeping the stream open. Queue any numbered storm events that arrive during the snapshot request, apply the snapshot, and then apply those queued events in event-ID order. This avoids a gap between the initial snapshot and the live stream.
+Publication transitions are explicit:
 
-- `active: true` means the storm is currently Predicted/Ongoing and can be refetched from the current storm API.
-- `active: false` means it is outside the current feed (normally Concluded), so remove it from a current-storm display.
-- `changed_fields` identifies the relevant fields that triggered the event. Creation events use an empty list.
+- `storm.published` — publication flag changed false → true;
+- `storm.unpublished` — publication flag changed true → false.
 
-### Reconnecting without losing events
+Private storm lifecycle/geometry changes do not create public-relevant visibility by themselves.
 
-SSE clients should preserve the last numbered event ID. On reconnect, send the standard header:
+### Event payload
 
-```http
-Last-Event-ID: 43
-```
-
-The server replays newer retained events and then continues waiting for live changes. Many SSE libraries handle `Last-Event-ID` automatically.
-
-A fresh connection with no `Last-Event-ID` starts at the current event cursor and receives future changes only. A database reset clears the runtime event outbox; the server detects the sequence rewind so a pre-reset cursor does not block later storm events.
-
-During quiet periods the server sends `: keep-alive` comments. These are not application events and can be ignored.
-
-> **Browser note:** the native browser `EventSource` API does not provide a portable way to set an `Authorization` header. Use a backend connection or an SSE/fetch client that supports custom headers. Do not put the Bearer token in the URL.
-
----
-
-## `GET /api/`
-
-Checks that the supplied Bearer token authenticates successfully.
-
-Example:
-
-```bash
-curl \
-  -H "Authorization: Bearer $WWC_TOKEN" \
-  https://api.example.com/api/
-```
-
----
-
-## `GET /api/codes/`
-
-Returns current database-backed reference codes used by storm and claim data.
-
-The response is keyed by stable machine-readable codes. Each code includes its current numeric ID and human-readable name.
-
-Example shape:
+A storm event JSON object contains:
 
 ```json
 {
-  "storm_codes": {
-    "type": {
-      "rain": {
-        "id": 1,
-        "name": "Rain Storm"
-      },
-      "snow": {
-        "id": 2,
-        "name": "Snow Storm"
-      }
-    },
-    "status": {
-      "predicted": {
-        "id": 1,
-        "name": "Predicted"
-      },
-      "ongoing": {
-        "id": 2,
-        "name": "Ongoing"
-      },
-      "concluded": {
-        "id": 3,
-        "name": "Concluded"
-      }
-    }
-  },
-  "claim_codes": {
-    "state": {
-      "online": {
-        "id": 1,
-        "name": "Online"
-      }
-    }
-  }
+  "id": 124,
+  "event_type": "storm.geometry_changed",
+  "storm_id": 123456789,
+  "status_id": 1,
+  "status_code": "predicted",
+  "api_published": true,
+  "active": true,
+  "changed_fields": ["fhs_x", "radius"],
+  "created_at": 1788040000
 }
 ```
 
-The exact catalogue may evolve. Clients should request `/api/codes/` rather than hard-coding copied display names or numeric IDs.
+Field meanings:
 
-For application logic, prefer stable dictionary keys/codes such as `rain`, `ongoing`, and `online` over human-readable `name` values.
+- `id` — durable SSE event cursor;
+- `event_type` — one of the four public event types above;
+- `storm_id` — stable storm resource ID;
+- `status_id` / `status_code` — resulting lifecycle status;
+- `api_published` — resulting publication flag;
+- `active` — true only when the resulting storm is both published and Predicted/Ongoing;
+- `changed_fields` — compact list of fields that caused the event;
+- `created_at` — Unix timestamp.
 
----
+Recommended consumer behavior:
 
-## `GET /api/storms/`
+- if `active` is true, refetch the storm or reconcile the list;
+- if `active` is false, remove the storm from a current-storm display;
+- treat `storm.published` as a reason to fetch/reconcile;
+- treat `storm.unpublished` as a reason to remove/reconcile.
 
-Returns all currently exposed storms.
+The delivery loop is event-driven internally; quiet connections do not poll SQLite repeatedly. This internal optimization does not change the public SSE wire format or replay semantics.
 
-Only storms whose lifecycle has **not** reached Concluded are returned. In the current lifecycle this means Predicted and Ongoing storms.
+## Claims
 
-Example:
+Claim routes require an **admin** Bearer token.
 
-```bash
-curl \
-  -H "Authorization: Bearer $WWC_TOKEN" \
-  https://api.example.com/api/storms/
-```
+### `GET /api/claims/`
 
-Example response:
+Returns all active weather-station claims.
 
-```json
-[
-  {
-    "id": 3608617449183851,
-    "thread_id": 1538620956556402688,
-    "designation": "Storm Alpha",
-    "status_id": 2,
-    "status_code": "ongoing",
-    "status_name": "Ongoing",
-    "type_id": 1,
-    "type_code": "rain",
-    "type_name": "Rain Storm",
-    "fhs_x": 128.0,
-    "fhs_y": -128.0,
-    "radius": 2000,
-    "named_by": "Kvass",
-    "prediction_detected_by": "Weather Watcher",
-    "analyst_ongoing": "Forecaster, Radar Lead",
-    "tracking_plotted_by": "Map Tech"
-  }
-]
-```
+### `GET /api/claims/{id}`
 
-If no Predicted/Ongoing storms are available, the response is:
+Returns one claim by stable `claim.id`.
 
-```json
-[]
-```
+Claim identity fields:
 
-### Polling clients
+- `id` — stable opaque database ID used by relationships/API detail;
+- `code` — mutable user-facing/in-game claim code;
+- `claim_hex_name` — display name;
+- `user_id` — current Discord owner ID;
+- `hex_id`, `hex_name` — map hex identity/presentation;
+- `state`, `state_id`, `state_code` — current state;
+- `fhs_x`, `fhs_y` — optional location;
+- `linked_id` — stable ID of a paired station when present.
 
-If you poll this endpoint, reconcile your local display against the entire returned list. Any previously displayed storm ID that disappears from the response should be removed from the client display.
+Do not use `code` as a stable relationship key; it may change while `id` remains the same.
 
----
+## Icons
 
-## `GET /api/storms/{id}`
+### `GET /api/icons/rain/`
 
-Returns one currently exposed storm by its stable API `id`.
+### `GET /api/icons/snow/`
 
-The path value is **not** the Discord `thread_id`.
+Return authenticated PNG files for the current WWC rain/snow icons.
 
-Example:
+## FHS and storm-radius conventions
 
-```bash
-curl \
-  -H "Authorization: Bearer $WWC_TOKEN" \
-  https://api.example.com/api/storms/3608617449183851
-```
-
-The endpoint returns `404 Not Found` if:
-
-- the ID does not exist; or
-- the storm exists historically but is no longer in the Predicted/Ongoing API feed.
-
----
-
-## Storm rendering guidance
-
-Storm geometry may include:
+Stored FHS coordinates use:
 
 ```text
-fhs_x
-fhs_y
-radius
+FHS_x: 0.0 through 256.0
+FHS_y: -205.7 through -50.3
 ```
 
-`radius` is expressed in metres.
+Storm `radius` is a positive whole number of metres and represents the **outer** coverage radius. WWC map rendering uses the inner 60% of radial distance as the solid inner zone and the 60%–100% interval as the transition/gradient band.
 
-If your integration renders the WWC-style storm coverage gradient, treat the stored radius as the **outer radius** of the storm area.
+## HTTP errors
 
-The inner zone extends from the centre to:
+Typical responses:
 
-```text
-0.60 × radius
-```
+- `401 Unauthorized` — Bearer token missing/invalid;
+- `403 Forbidden` — token authenticates but lacks the required permission, such as a non-admin token requesting claims;
+- `404 Not Found` — stable resource ID is absent or a requested storm is outside the public-active publication boundary;
+- `400 Bad Request` — malformed `Last-Event-ID` or other request validation failure.
 
-The outer transition/gradient band extends from:
-
-```text
-0.60 × radius  →  1.00 × radius
-```
-
-This is a **60% radial fraction**, not 60% of the circle's total area.
-
-This convention applies when rendering either rain or snow storm coverage.
-
----
-
-## `GET /api/claims/`
-
-Returns all weather-station claims.
-
-Example:
-
-```bash
-curl \
-  -H "Authorization: Bearer $WWC_TOKEN" \
-  https://api.example.com/api/claims/
-```
-
----
-
-## `GET /api/claims/{id}`
-
-Returns one weather-station claim by its stable API `id`.
-
-The path value is **not** the public/in-game claim `code`.
-
-Example:
-
-```bash
-curl \
-  -H "Authorization: Bearer $WWC_TOKEN" \
-  https://api.example.com/api/claims/7303474700435961
-```
-
-Example response:
-
-```json
-{
-  "id": 7303474700435961,
-  "code": 8764,
-  "claim_hex_name": "Deadlands",
-  "user_id": 123456789012345678,
-  "hex_id": 27,
-  "hex_name": "Deadlands",
-  "state": "Online",
-  "state_id": 1,
-  "state_code": "online",
-  "fhs_x": 45.6,
-  "fhs_y": -105.3,
-  "linked_id": 8123456789012345
-}
-```
-
-A claim may be paired with one other station. If present, `linked_id` is the stable API ID of the linked claim and can be followed with `GET /api/claims/{id}`.
-
----
-
-## `GET /api/icons/rain/`
-
-Returns the current rain icon as a PNG image.
-
-```bash
-curl \
-  -H "Authorization: Bearer $WWC_TOKEN" \
-  https://api.example.com/api/icons/rain/ \
-  --output rain.png
-```
-
-Successful responses use:
-
-```http
-Content-Type: image/png
-```
-
----
-
-## `GET /api/icons/snow/`
-
-Returns the current snow icon as a PNG image.
-
-```bash
-curl \
-  -H "Authorization: Bearer $WWC_TOKEN" \
-  https://api.example.com/api/icons/snow/ \
-  --output snow.png
-```
-
-Successful responses use:
-
-```http
-Content-Type: image/png
-```
-
----
-
-## Response behavior
-
-Optional values that are currently unknown are omitted rather than returned as `null`. Clients must not assume every optional field is present.
-
-Storm and claim detail routes use stable opaque integer `id` values:
-
-- `storm.id` is separate from its optional Discord `thread_id`;
-- `claim.id` is separate from its mutable public `code`.
-
-For logic, prefer `*_code` fields over `*_name` display fields.
-
-## Common HTTP responses
-
-| Status | Meaning                                                       |
-| -----: | ------------------------------------------------------------- |
-|  `200` | Request succeeded                                             |
-|  `400` | Invalid request metadata, such as a malformed `Last-Event-ID` |
-|  `401` | Token missing or invalid                                      |
-|  `403` | Token lacks required permission                               |
-|  `404` | Resource is unavailable in the current endpoint/feed          |
-|  `422` | Invalid path/request value                                    |
-|  `500` | Unexpected server error                                       |
-|  `503` | API temporarily unavailable                                   |
-
-## Python polling example
-
-```python
-import os
-import requests
-
-base_url = "https://api.example.com"
-token = os.environ["WWC_API_TOKEN"]
-headers = {"Authorization": f"Bearer {token}"}
-
-response = requests.get(
-    f"{base_url}/api/storms/",
-    headers=headers,
-    timeout=10,
-)
-response.raise_for_status()
-
-# Treat this complete set as authoritative for the current display.
-current_storms = {
-    storm["id"]: storm
-    for storm in response.json()
-}
-```
-
-For the real API address, access details, token problems, or integration questions, contact **dr.kvass on Discord**.
+Do not infer private resource existence from a public storm `404`.
