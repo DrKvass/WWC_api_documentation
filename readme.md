@@ -1,18 +1,18 @@
 # WWC Public API Guide
 
-Current contract: **30 August 2026**
+Current contract: **1 September 2026**
 
-This document is intentionally self-contained. It describes the public WWC Bearer-token API as it is currently exposed at `https://example.url/api/`.
+This document is intentionally self-contained. It describes the public WWC Bearer-token API as it is currently exposed at `https://foxholewwc.com/api/`.
 
 ## Base URL
 
-Contac dr.kvass on discord.
-
-This doc will use
-
+```text
+https://foxholewwc.com/api/
 ```
-https://example.url/
-```
+
+`https://foxholewwc.com` is the authoritative WWC origin. `https://www.foxholewwc.com/` redirects to the canonical apex domain. For compatibility, the old URL remains directly reverse-proxied to the API rather than cross-host redirected, because many HTTP clients intentionally remove the Bearer `Authorization` header when following a redirect to another hostname.
+
+Non-API old URL paths redirect to the canonical apex domain. New integrations should use the canonical API base URL directly.
 
 All API-client routes are below `/api/`. The website login at `/`, browser OAuth routes under `/auth/`, and the protected interactive map under `/map/` are separate browser interfaces and do not use API Bearer tokens.
 
@@ -24,11 +24,13 @@ Every request requires an HTTP Bearer token:
 Authorization: Bearer <token>
 ```
 
+For a valid bearer token contact `[82DK] Dr.Kvass`.
+
 Example:
 
 ```bash
 curl -H "Authorization: Bearer $WWC_TOKEN" \
-  https://example.url/api/
+  https://foxholewwc.com/api/
 ```
 
 A successful authentication check returns an object containing the token display name and permission.
@@ -52,10 +54,11 @@ A `write` token satisfies `read` checks. An `admin` token satisfies both `write`
 | GET    | `/api/storms/events/` | read                | Publication-aware storm Server-Sent Events stream.        |
 | GET    | `/api/claims/`        | **admin**           | List all active weather-station claims.                   |
 | GET    | `/api/claims/{id}`    | **admin**           | Return one claim by stable claim ID.                      |
+| GET    | `/api/icons/unknown/` | read                | Unknown/cloud storm icon PNG.                             |
 | GET    | `/api/icons/rain/`    | read                | Rain icon PNG.                                            |
 | GET    | `/api/icons/snow/`    | read                | Snow icon PNG.                                            |
 
-Trailing slashes are shown exactly as used by the route definitions. Storm and claim `{id}` values are opaque stable database IDs.
+Trailing slashes are shown exactly as used by the route definitions. Storm and claim `{id}` values are opaque stable database IDs, not Discord thread IDs or mutable claim codes.
 
 ## Authentication check
 
@@ -172,7 +175,7 @@ Example:
 
 ```bash
 curl -H "Authorization: Bearer $WWC_TOKEN" \
-  https://example.url/api/storms/123456789/
+  https://foxholewwc.com/api/storms/123456789/
 ```
 
 When a previously visible storm stops being public-active, clients should remove it from current displays instead of assuming the ID became invalid permanently.
@@ -282,21 +285,33 @@ Claim identity fields:
 - `id` — stable opaque database ID used by relationships/API detail;
 - `code` — mutable user-facing/in-game claim code;
 - `claim_hex_name` — display name;
-- `user_id` — current Discord owner ID;
+- `user_id` — current Discord owner ID, serialized as a **decimal string** in JSON so JavaScript clients preserve the full snowflake exactly;
 - `hex_id`, `hex_name` — map hex identity/presentation;
 - `state`, `state_id`, `state_code` — current state;
 - `fhs_x`, `fhs_y` — optional location;
 - `linked_id` — stable ID of a paired station when present.
 
+Example owner field:
+
+```json
+{
+  "user_id": "9007199254740997"
+}
+```
+
+Treat `user_id` as an opaque decimal string. Do not parse it through a JavaScript `Number` when exact Discord identity matters.
+
 Do not use `code` as a stable relationship key; it may change while `id` remains the same.
 
 ## Icons
+
+### `GET /api/icons/unknown/`
 
 ### `GET /api/icons/rain/`
 
 ### `GET /api/icons/snow/`
 
-Return authenticated PNG files for the current WWC rain/snow icons.
+Return authenticated PNG files for the current WWC storm-type icons. `unknown` is the cloud marker used when a Storm has not yet been classified as Rain or Snow.
 
 ## FHS and storm-radius conventions
 
