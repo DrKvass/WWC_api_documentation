@@ -1,6 +1,6 @@
 # WWC Public API Guide
 
-Current contract: **1 September 2026**
+Current contract: **11 September 2026**
 
 This document is intentionally self-contained. It describes the public WWC Bearer-token API as it is currently exposed at `https://foxholewwc.com/api/`.
 
@@ -10,11 +10,26 @@ This document is intentionally self-contained. It describes the public WWC Beare
 https://foxholewwc.com/api/
 ```
 
-`https://foxholewwc.com` is the authoritative WWC origin. `https://www.foxholewwc.com/` redirects to the canonical apex domain. For compatibility, the old URL remains directly reverse-proxied to the API rather than cross-host redirected, because many HTTP clients intentionally remove the Bearer `Authorization` header when following a redirect to another hostname.
-
-Non-API old URL paths redirect to the canonical apex domain. New integrations should use the canonical API base URL directly.
+`https://foxholewwc.com` is the authoritative WWC origin. `https://www.foxholewwc.com/` redirects to the canonical apex domain. For compatibility, `https://k.w4.si/api/` remains directly reverse-proxied to the API rather than cross-host redirected, because many HTTP clients intentionally remove the Bearer `Authorization` header when following a redirect to another hostname. Non-API `k.w4.si` paths redirect to the canonical apex domain. New integrations should use the canonical API base URL directly.
 
 All API-client routes are below `/api/`. The website login at `/`, browser OAuth routes under `/auth/`, and the protected interactive map under `/map/` are separate browser interfaces and do not use API Bearer tokens.
+
+## Request limits
+
+One IP may make **two immediate requests**, with one admission refilling every
+five seconds, across all public `/api/*` endpoints and tokens. The canonical and
+legacy hostnames share the same limit. A poll and its trailing-slash redirect
+fit within this burst. Refilling both admissions takes ten seconds.
+This includes unauthenticated attempts and new SSE connections; data arriving on
+an existing SSE connection does not consume additional requests. An IP may keep
+at most **two public SSE streams** open.
+
+Excess requests return **429 Too Many Requests** with a **Retry-After** header in
+seconds. Wait at least that long before retrying, and avoid parallel API calls.
+Server-wide capacity protection can return **503 Service Unavailable**; back off
+and honor `Retry-After` when present. Keep at least five seconds between requests
+and use the exact trailing-slash spellings below. People or integrations sharing
+one NAT/VPN address share the quota. Website map requests have separate limits.
 
 ## Authentication
 
@@ -23,8 +38,6 @@ Every request requires an HTTP Bearer token:
 ```http
 Authorization: Bearer <token>
 ```
-
-For a valid bearer token contact `[82DK] Dr.Kvass`.
 
 Example:
 
@@ -45,18 +58,18 @@ A `write` token satisfies `read` checks. An `admin` token satisfies both `write`
 
 ## Endpoint summary
 
-| Method | Route                 | Required permission | Purpose                                                   |
-| ------ | --------------------- | ------------------- | --------------------------------------------------------- |
-| GET    | `/api/`               | read                | Verify the token and return its name/permission.          |
-| GET    | `/api/codes/`         | read                | Current database-backed reference codes.                  |
-| GET    | `/api/storms/`        | read                | List API-published active storms.                         |
-| GET    | `/api/storms/{id}`    | read                | Return one API-published active storm by stable storm ID. |
-| GET    | `/api/storms/events/` | read                | Publication-aware storm Server-Sent Events stream.        |
-| GET    | `/api/claims/`        | **admin**           | List all active weather-station claims.                   |
-| GET    | `/api/claims/{id}`    | **admin**           | Return one claim by stable claim ID.                      |
-| GET    | `/api/icons/unknown/` | read                | Unknown/cloud storm icon PNG.                             |
-| GET    | `/api/icons/rain/`    | read                | Rain icon PNG.                                            |
-| GET    | `/api/icons/snow/`    | read                | Snow icon PNG.                                            |
+| Method | Route | Required permission | Purpose |
+| --- | --- | --- | --- |
+| GET | `/api/` | read | Verify the token and return its name/permission. |
+| GET | `/api/codes/` | read | Current database-backed reference codes. |
+| GET | `/api/storms/` | read | List API-published active storms. |
+| GET | `/api/storms/{id}` | read | Return one API-published active storm by stable storm ID. |
+| GET | `/api/storms/events/` | read | Publication-aware storm Server-Sent Events stream. |
+| GET | `/api/claims/` | **admin** | List all active weather-station claims. |
+| GET | `/api/claims/{id}` | **admin** | Return one claim by stable claim ID. |
+| GET | `/api/icons/unknown/` | read | Unknown/cloud storm icon PNG. |
+| GET | `/api/icons/rain/` | read | Rain icon PNG. |
+| GET | `/api/icons/snow/` | read | Snow icon PNG. |
 
 Trailing slashes are shown exactly as used by the route definitions. Storm and claim `{id}` values are opaque stable database IDs, not Discord thread IDs or mutable claim codes.
 
@@ -125,6 +138,7 @@ Important identity fields:
 Lifecycle/reference fields include the corresponding database ID, stable code, and display name where applicable:
 
 - `status_id`, `status_code`, `status_name`;
+- `plot_type` — `triangulation`, `partial_triangulation`, or `prediction_probability_map`;
 - `type_id`, `type_code`, `type_name`;
 - `size_id`, `size_code`, `size_name`;
 - `origin_id`, `origin_name`;
@@ -159,7 +173,7 @@ Contributor presentation fields, when known:
 - `prediction_plotted_by`;
 - `tracking_plotted_by`.
 
-Contributor values are current Discord server display names/nicknames, not Discord user IDs. The two analyst fields may contain comma-separated display names. Names are mutable presentation values and must not be treated as stable identity keys.
+Contributor values are current Discord server display names/nicknames, not Discord user IDs. The analyst fields and the three detected-by fields may contain comma-separated display names. Names are mutable presentation values and must not be treated as stable identity keys.
 
 Fields whose value is `null` are omitted from the response.
 
@@ -289,7 +303,7 @@ Claim identity fields:
 - `hex_id`, `hex_name` — map hex identity/presentation;
 - `state`, `state_id`, `state_code` — current state;
 - `fhs_x`, `fhs_y` — optional location;
-- `linked_id` — stable ID of a paired station when present.
+- `linked_id` — retained for compatibility; unset and omitted from public HTTP responses while claim pairing is retired.
 
 Example owner field:
 
@@ -306,9 +320,7 @@ Do not use `code` as a stable relationship key; it may change while `id` remains
 ## Icons
 
 ### `GET /api/icons/unknown/`
-
 ### `GET /api/icons/rain/`
-
 ### `GET /api/icons/snow/`
 
 Return authenticated PNG files for the current WWC storm-type icons. `unknown` is the cloud marker used when a Storm has not yet been classified as Rain or Snow.
@@ -331,6 +343,8 @@ Typical responses:
 - `401 Unauthorized` — Bearer token missing/invalid;
 - `403 Forbidden` — token authenticates but lacks the required permission, such as a non-admin token requesting claims;
 - `404 Not Found` — stable resource ID is absent or a requested storm is outside the public-active publication boundary;
+- `429 Too Many Requests` — IP request/connection quota exceeded; wait for `Retry-After`;
+- `503 Service Unavailable` — temporary server-wide capacity protection or an unavailable service;
 - `400 Bad Request` — malformed `Last-Event-ID` or other request validation failure.
 
 Do not infer private resource existence from a public storm `404`.
