@@ -1,9 +1,5 @@
 # WWC Public API Guide
 
-Current contract: **11 September 2026**
-
-This document is intentionally self-contained. It describes the public WWC Bearer-token API as it is currently exposed at `https://foxholewwc.com/api/`.
-
 ## Base URL
 
 ```text
@@ -159,8 +155,7 @@ Timeline fields, when known:
 
 Weather-station relationship summaries, when known:
 
-- `ws_prediction`;
-- `ws_ongoing`.
+- `storm_claims` — one comma-separated list of weather-station names for the whole storm; each station is included once.
 
 Contributor presentation fields, when known:
 
@@ -168,12 +163,11 @@ Contributor presentation fields, when known:
 - `prediction_detected_by`;
 - `start_detected_by`;
 - `end_detected_by`;
-- `analyst_prediction`;
-- `analyst_ongoing`;
+- `analysed_by` — all analysts for the storm, each person included once;
 - `prediction_plotted_by`;
 - `tracking_plotted_by`.
 
-Contributor values are current Discord server display names/nicknames, not Discord user IDs. The analyst fields and the three detected-by fields may contain comma-separated display names. Names are mutable presentation values and must not be treated as stable identity keys.
+Contributor values are current Discord server display names/nicknames, not Discord user IDs. The `analysed_by` field and the three detected-by fields may contain comma-separated display names. Names are mutable presentation values and must not be treated as stable identity keys.
 
 Fields whose value is `null` are omitted from the response.
 
@@ -348,3 +342,64 @@ Typical responses:
 - `400 Bad Request` — malformed `Last-Event-ID` or other request validation failure.
 
 Do not infer private resource existence from a public storm `404`.
+
+## Current API change summary since 28 August 2026
+
+- canonical API origin moved to `https://foxholewwc.com/api/`; legacy `https://k.w4.si/api/` remains directly reverse-proxied for Bearer-token compatibility while non-API legacy paths redirect to the apex;
+- claim reads changed from `read` to **admin** permission;
+- claim `user_id` now serializes as a decimal string so Discord snowflakes remain exact for JavaScript clients;
+- storm visibility became explicitly publication-aware: only published Predicted/Ongoing storms are public;
+- new storms are private by default and storm creation no longer emits a public SSE event;
+- `storm.published` and `storm.unpublished` were added to the external SSE contract;
+- SSE delivery changed internally from interval polling to event-driven wakeups while preserving durable replay/`Last-Event-ID` behavior;
+- the shared Unknown/cloud storm icon is now exposed at `/api/icons/unknown/` alongside Rain and Snow;
+- public API mutation routes are not exposed; the current contract is GET/SSE only;
+- `/api/` remains the API namespace while website OAuth and `/map/` are separate browser interfaces.
+
+
+## 11 September 2026 — plot types and detector limits
+
+Storm responses now include `plot_type`, a stable string: `triangulation`,
+`partial_triangulation`, or `prediction_probability_map`. The latter two apply
+only to Predicted storms. Every other lifecycle status uses `triangulation`.
+Creating a triangulation or probability map sets this field automatically.
+Authorized storm editors can set partial triangulation with `/storm edit plot_type`
+or the website’s Edit → Classification → Plot type selector. Plot type appears directly below Status and above publication in Classification. Existing storm-edit permissions apply.
+Existing Predicted probability maps are classified during schema migration 26;
+other existing storms default to triangulation. A plot-type change on a published
+active storm emits `storm.geometry_changed` with `plot_type` in `changed_fields`.
+Refetch the storm when this event arrives.
+
+Recommended rendering for Predicted storms:
+
+| `plot_type` | Display |
+| --- | --- |
+| `triangulation` | Solid pink outline and sparse pink diagonal crosshatching across the whole plot at alpha 0.5. Ongoing storms have no hatching. |
+| `partial_triangulation` | Red dashed outline and red diagonal stripes at alpha 0.5 between the plotted maximum radius and the minimum for its size: Small 1,092 m, Medium 2,191 m, Large 2,846 m. At or below that minimum, use the outline only. Size is derived from radius; Small keeps its physical 1,092 m minimum rather than the classification lower bound. |
+| `prediction_probability_map` | Orange dashed outline around the candidate probability footprint. |
+
+Clip fills, stripes and outlines to the map's hex footprint, including the
+outline along a cut map edge. Distances are metres, using the existing FHS
+metric conversion. Plot type does not change storm type, size or intensity.
+
+Each of `prediction_detected_by`, `start_detected_by`, and `end_detected_by`
+now represents zero, one or two people, independently. Public JSON retains its
+existing optional string shape: omitted from public HTTP responses when no people are assigned, one server display name,
+or two display names joined with `", "`. For example:
+
+```json
+{"plot_type":"partial_triangulation","prediction_detected_by":"Alice, Bob"}
+```
+
+Display names may contain commas and must not be parsed as stable identities.
+Bot reports and website details include both names. A third assignment is
+rejected; remove one person first. Named-by and plotted-by remain single-person,
+and analysed-by remains unrestricted.
+
+Claim pairing is retired. Claim reads retain `linked_id` for compatibility and
+set it to `null` internally (omitted in public HTTP responses); the migration unlinks all existing pairs and preserves the claims. Pair commands and website controls
+are unavailable; old browser pairing endpoints return 410 Gone. Attaching one
+station to a storm attaches only that station. The upcoming-condition Rain/Snow
+selector is also retired; generic Storm remains available. Existing backend type
+records are preserved for future reintegration. These changes do not add public
+HTTP write routes.
